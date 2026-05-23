@@ -20,6 +20,22 @@ Your TVDB API key can be found at https://thetvdb.com/dashboard/account/apikey
 ### 2. Build and run
 
 ```bash
+services:
+  existarr:
+    image: ghcr.io/xxfantasiadownxx/existarr:latest
+    container_name: existarr
+    ports:
+      - "5100:5100"
+    environment:
+      - TVDB_API_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+      - MEDIA_ROOT=/media
+    volumes:
+      - /path/to/media/:/media:ro
+      - ./data:/data
+    restart: unless-stopped
+```
+
+```bash
 docker compose up -d
 ```
 
@@ -63,9 +79,3 @@ The search bar on each series page filters in real-time against:
 - Plot summary
 
 Matching text is highlighted in the results.
-
----
-
-## Data persistence
-
-Added shows are stored in a named Docker volume (`existarr_data`) so they survive container restarts and rebuilds.
