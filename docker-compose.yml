@@ -1,6 +1,6 @@
 services:
   existarr:
-    build: .
+    image: ghcr.io/xxfantasiadownxx/existarr:latest
     container_name: existarr
     ports:
       - "5100:5100"
