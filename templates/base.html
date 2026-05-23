@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Existarr{% block title %}{% endblock %}</title>
+  <link rel="icon" type="image/png" href="/static/img/logo_only.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css"/>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <a href="/" class="brand-link">
+          <img src="/static/img/text_only.png" alt="Existarr" class="brand-logo" />
+        </a>
+      </div>
+
+      <!-- Global search -->
+      <div class="sidebar-global-search">
+        <form action="/search" method="GET">
+          <div class="sidebar-search-wrap">
+            <span class="sidebar-search-icon">⌕</span>
+            <input
+              type="text" name="q"
+              class="sidebar-search-input"
+              placeholder="Search all series…"
+              autocomplete="off"
+              {% if request.path == '/search' and request.args.get('q') %}
+              value="{{ request.args.get('q') }}"
+              {% endif %}
+            />
+          </div>
+        </form>
+      </div>
+
+      <!-- Manual add show -->
+      <div class="add-show-form" id="add-show-form">
+        <div class="add-show-toggle" onclick="toggleAddForm()">
+          <span>+ ADD SERIES MANUALLY</span>
+        </div>
+        <div class="add-show-fields" id="add-show-fields" style="display:none;">
+          <form action="/add" method="POST" id="manual-add-form">
+            <input type="text" name="tvdb_id" placeholder="TVDB Series ID" class="add-input" required />
+            <div id="path-fields">
+              <input type="text" name="path_0" placeholder="/storage2/Shows/Series Name" class="add-input path-field" />
+            </div>
+            <button type="button" class="add-path-btn" onclick="addPathField()">+ add another path</button>
+            <button type="submit" class="add-btn">ADD SERIES</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Auto-discovery link -->
+      <a href="/sources" class="sidebar-sources-link {% if request.path == '/sources' %}active{% endif %}">
+        <span class="sources-icon">⟳</span>
+        <span>Auto-Discovery</span>
+      </a>
+
+      <div class="sidebar-section-label-row">
+        <span class="sidebar-section-label">YOUR SERIES</span>
+        <button class="sort-toggle" id="sort-toggle" onclick="toggleSort()" title="Toggle sort order">
+          <span id="sort-icon">A↓</span>
+        </button>
+      </div>
+
+      <nav class="show-list">
+        {% if shows %}
+          {% for sid, show in shows.items() %}
+          <a href="/series/{{ sid }}" class="show-item {% if request.path == '/series/' + sid %}active{% endif %}">
+            {% if show.image %}
+            <img src="{{ show.image }}" alt="" class="show-thumb" />
+            {% else %}
+            <div class="show-thumb-placeholder">?</div>
+            {% endif %}
+            <div class="show-item-text">
+              <span class="show-item-name">{{ show.name }}</span>
+              {% if show.get('auto') %}
+              <span class="show-auto-badge">AUTO</span>
+              {% endif %}
+            </div>
+          </a>
+          {% endfor %}
+        {% else %}
+          <p class="no-shows">No shows added yet.</p>
+        {% endif %}
+      </nav>
+    </aside>
+
+    <main class="main-content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <script>
+    function toggleAddForm() {
+      const fields = document.getElementById('add-show-fields');
+      fields.style.display = fields.style.display === 'none' ? 'block' : 'none';
+    }
+
+    let pathCount = 1;
+    function addPathField() {
+      const container = document.getElementById('path-fields');
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.name = 'path_' + pathCount++;
+      input.placeholder = '/storage4/Kids Shows/Show Name';
+      input.className = 'add-input path-field';
+      container.appendChild(input);
+    }
+
+    // ── Sidebar sort ───────────────────────────────────────────────────────
+    const SORT_KEY = 'existarr_sort';
+
+    function applySort(alpha) {
+      const nav  = document.querySelector('.show-list');
+      const items = Array.from(nav.querySelectorAll('a.show-item'));
+      if (!items.length) return;
+
+      if (alpha) {
+        items.sort((a, b) => {
+          const nameA = a.querySelector('.show-item-name').textContent.trim().toLowerCase();
+          const nameB = b.querySelector('.show-item-name').textContent.trim().toLowerCase();
+          return nameA.localeCompare(nameB);
+        });
+      } else {
+        // Restore original order using data-index set at render time
+        items.sort((a, b) => parseInt(a.dataset.index) - parseInt(b.dataset.index));
+      }
+
+      items.forEach(item => nav.appendChild(item));
+      document.getElementById('sort-icon').textContent = alpha ? 'A↑' : 'A↓';
+    }
+
+    function toggleSort() {
+      const current = localStorage.getItem(SORT_KEY) === 'alpha';
+      const next = !current;
+      localStorage.setItem(SORT_KEY, next ? 'alpha' : 'default');
+      applySort(next);
+    }
+
+    // Stamp each item with its original index, then apply saved preference
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('a.show-item').forEach((el, i) => {
+        el.dataset.index = i;
+      });
+      const isAlpha = localStorage.getItem(SORT_KEY) === 'alpha';
+      applySort(isAlpha);
+    });
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

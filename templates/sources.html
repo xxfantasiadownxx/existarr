@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %} — Auto-Discovery{% endblock %}
+
+{% block content %}
+<div class="global-search-header">
+  <h1 class="global-search-title">AUTO-DISCOVERY</h1>
+  <p class="sources-intro">
+    Add library root paths below. Existarr will recursively scan them for folders
+    containing <code class="inline-code">{tvdb-XXXXXXX}</code> in their name and
+    automatically add matching series. Re-scans every 24 hours.
+  </p>
+</div>
+
+<!-- Status bar -->
+<div class="sources-status-bar">
+  <div class="sources-status-info">
+    {% if sources.last_run %}
+      <span class="status-item">Last scan: <strong>{{ sources.last_run[:19].replace('T',' ') }}</strong></span>
+      {% if sources.last_added %}
+        <span class="status-item status-added">+{{ sources.last_added | length }} added last run</span>
+      {% endif %}
+    {% else %}
+      <span class="status-item">No scan run yet</span>
+    {% endif %}
+  </div>
+  <button class="scan-now-btn" id="scan-btn" onclick="triggerScan()">⟳ Scan Now</button>
+</div>
+
+<!-- Scan result feedback -->
+<div class="scan-result" id="scan-result" style="display:none;"></div>
+
+<!-- Source paths -->
+<div class="sources-section">
+  <h2 class="sources-section-title">LIBRARY SOURCES</h2>
+
+  {% if sources.paths %}
+  <div class="source-list">
+    {% for path in sources.paths %}
+    <div class="source-row">
+      <span class="source-path">{{ path }}</span>
+      <form action="/sources/remove" method="POST" style="margin:0;">
+        <input type="hidden" name="path" value="{{ path }}" />
+        <button type="submit" class="source-remove-btn"
+                onclick="return confirm('Remove this source path?')">✕</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="no-sources-hint">No source paths added yet. Add a path below to get started.</p>
+  {% endif %}
+
+  <form action="/sources/add" method="POST" class="add-source-form">
+    <input type="text" name="path" class="add-input"
+           placeholder="/storage2/Documentaries/Series" required />
+    <button type="submit" class="add-btn">+ ADD SOURCE</button>
+  </form>
+</div>
+
+<!-- Example naming -->
+<div class="sources-section sources-help">
+  <h2 class="sources-section-title">NAMING CONVENTION</h2>
+  <p class="sources-help-text">
+    For auto-discovery to work, your show folders must include a TVDB ID tag:
+  </p>
+  <div class="naming-examples">
+    <div class="naming-ex">Wild Kratts (2010) <span class="tvdb-tag">{tvdb-216851}</span></div>
+    <div class="naming-ex">PBS NOVA <span class="tvdb-tag">{tvdb-73693}</span></div>
+    <div class="naming-ex">Nature (1982) <span class="tvdb-tag">{tvdb-77623}</span></div>
+  </div>
+  <p class="sources-help-text" style="margin-top:12px;">
+    The folder can be at any depth inside your source path — Existarr scans recursively.
+  </p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function triggerScan() {
+  const btn    = document.getElementById('scan-btn');
+  const result = document.getElementById('scan-result');
+  btn.disabled = true;
+  btn.textContent = '⟳ Scanning…';
+  result.style.display = 'none';
+
+  try {
+    const resp = await fetch('/sources/scan', { method: 'POST' });
+    const data = await resp.json();
+    result.style.display = 'block';
+    if (data.count > 0) {
+      result.className = 'scan-result scan-result-success';
+      result.innerHTML = `✓ Added ${data.count} new series: ${data.added.map(n => `<strong>${n}</strong>`).join(', ')}. <a href="/">Refresh sidebar</a> to see them.`;
+    } else {
+      result.className = 'scan-result scan-result-neutral';
+      result.textContent = '✓ Scan complete — no new series found.';
+    }
+  } catch(e) {
+    result.style.display = 'block';
+    result.className = 'scan-result scan-result-error';
+    result.textContent = 'Scan failed: ' + e.message;
+  }
+
+  btn.disabled = false;
+  btn.textContent = '⟳ Scan Now';
+}
+</script>
+{% endblock %}

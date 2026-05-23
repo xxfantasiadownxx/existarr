@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %} — {{ show_name }}{% endblock %}
+
+{% block content %}
+<div class="series-header">
+  {% if show_image %}
+  <div class="series-banner" style="background-image: url('{{ show_image }}')">
+    <div class="series-banner-overlay"></div>
+  </div>
+  {% endif %}
+  <div class="series-meta">
+    <div class="series-meta-left">
+      <h1 class="series-title">{{ show_name }}</h1>
+      {% if show.get('auto') %}
+      <span class="auto-tag">AUTO-DISCOVERED</span>
+      {% endif %}
+
+      <!-- Media paths display -->
+      <div class="paths-section">
+        <div class="paths-header">
+          <span class="path-label">MEDIA PATHS</span>
+          <button class="path-edit-btn" onclick="togglePathEdit()">edit</button>
+        </div>
+
+        <div class="paths-display" id="paths-display">
+          {% if media_paths %}
+            {% for p in media_paths %}
+            <div class="path-chip">{{ p }}</div>
+            {% endfor %}
+          {% else %}
+            <span class="path-chip path-chip-warn">No paths configured</span>
+          {% endif %}
+        </div>
+
+        <div class="path-edit-form" id="path-edit-form" style="display:none;">
+          <form action="/update-paths/{{ tvdb_id }}" method="POST" id="paths-form">
+            <div id="edit-path-fields">
+              {% for p in media_paths %}
+              <div class="edit-path-row">
+                <input type="text" name="path_{{ loop.index0 }}" value="{{ p }}" class="path-input" />
+                <button type="button" class="path-remove-btn" onclick="removePathRow(this)">✕</button>
+              </div>
+              {% endfor %}
+              {% if not media_paths %}
+              <div class="edit-path-row">
+                <input type="text" name="path_0" value="" class="path-input" placeholder="/storage2/Shows/Series" />
+                <button type="button" class="path-remove-btn" onclick="removePathRow(this)">✕</button>
+              </div>
+              {% endif %}
+            </div>
+            <div class="edit-path-actions">
+              <button type="button" class="add-path-inline-btn" onclick="addEditPath()">+ Add Path</button>
+              <button type="submit" class="path-save-btn">Save</button>
+              <button type="button" class="path-cancel-btn" onclick="togglePathEdit()">Cancel</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="series-meta-right">
+      <div class="series-stats">
+        <span class="stat-badge">{{ episodes | length }} episode{{ 's' if episodes | length != 1 else '' }} owned</span>
+      </div>
+      <form action="/remove/{{ tvdb_id }}" method="POST" class="remove-form"
+            onsubmit="return confirm('Remove {{ show_name }} from Existarr?')">
+        <button type="submit" class="remove-btn">✕ Remove Series</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="search-bar-wrap">
+  <span class="search-icon">⌕</span>
+  <input id="episode-search" type="text" class="search-bar"
+         placeholder="Search episodes by title or plot…" autocomplete="off" />
+  <span id="search-count" class="search-count"></span>
+</div>
+
+<div class="episode-list" id="episode-list">
+  {% for ep in episodes %}
+  <div class="episode-card"
+       data-title="{{ ep.title | lower }}"
+       data-overview="{{ ep.overview | lower }}">
+    <div class="ep-code">S{{ '%02d'|format(ep.season) }}E{{ '%02d'|format(ep.episode) }}</div>
+    <div class="ep-body">
+      <div class="ep-title">{{ ep.title }}</div>
+      {% if ep.overview %}
+      <div class="ep-overview">{{ ep.overview }}</div>
+      {% endif %}
+    </div>
+    {% if ep.aired %}
+    <div class="ep-aired">{{ ep.aired }}</div>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="no-episodes">
+    <p>No owned episodes found for this series.</p>
+    <p class="no-episodes-hint">
+      {% if media_paths %}
+        Scanning:<br>
+        {% for p in media_paths %}<code>{{ p }}</code><br>{% endfor %}
+      {% else %}
+        No media paths are configured for this series.
+      {% endif %}
+    </p>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/search.js"></script>
+<script>
+  function togglePathEdit() {
+    const display = document.getElementById('paths-display');
+    const form    = document.getElementById('path-edit-form');
+    const editing = form.style.display !== 'none';
+    display.style.display = editing ? 'block' : 'none';
+    form.style.display    = editing ? 'none'  : 'block';
+  }
+
+  let editPathCount = {{ media_paths | length if media_paths else 1 }};
+
+  function addEditPath() {
+    const container = document.getElementById('edit-path-fields');
+    const row = document.createElement('div');
+    row.className = 'edit-path-row';
+    row.innerHTML = `
+      <input type="text" name="path_${editPathCount++}" class="path-input"
+             placeholder="/storage4/Shows/Series Name" />
+      <button type="button" class="path-remove-btn" onclick="removePathRow(this)">✕</button>
+    `;
+    container.appendChild(row);
+  }
+
+  function removePathRow(btn) {
+    const row = btn.closest('.edit-path-row');
+    const container = document.getElementById('edit-path-fields');
+    if (container.children.length > 1) {
+      row.remove();
+    } else {
+      row.querySelector('input').value = '';
+    }
+  }
+</script>
+{% endblock %}

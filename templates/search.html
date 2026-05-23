@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %} — Search{% endblock %}
+
+{% block content %}
+<div class="global-search-header">
+  <h1 class="global-search-title">GLOBAL SEARCH</h1>
+
+  <form action="/search" method="GET" class="global-search-form">
+    <div class="global-search-bar-wrap">
+      <span class="search-icon">⌕</span>
+      <input
+        type="text"
+        name="q"
+        value="{{ query }}"
+        class="search-bar global-search-input"
+        placeholder="Search all series by title or plot…"
+        autocomplete="off"
+        autofocus
+      />
+      <button type="submit" class="global-search-btn">SEARCH</button>
+    </div>
+  </form>
+
+  {% if query %}
+  <div class="global-search-meta">
+    {% if total > 0 %}
+      <span class="stat-badge">{{ total }} episode{{ 's' if total != 1 else '' }} across {{ results | length }} series</span>
+    {% else %}
+      <span class="stat-badge no-results-badge">No episodes found for "{{ query }}"</span>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% if results %}
+  {% for group in results %}
+  <div class="search-group">
+    <div class="search-group-header">
+      {% if group.show_image %}
+      <img src="{{ group.show_image }}" alt="" class="search-group-thumb" />
+      {% endif %}
+      <a href="/series/{{ group.tvdb_id }}" class="search-group-name">{{ group.show_name }}</a>
+      <span class="search-group-count">{{ group.episodes | length }} match{{ 'es' if group.episodes | length != 1 else '' }}</span>
+    </div>
+
+    <div class="episode-list search-episode-list">
+      {% for ep in group.episodes %}
+      <div class="episode-card">
+        <div class="ep-code">S{{ '%02d'|format(ep.season) }}E{{ '%02d'|format(ep.episode) }}</div>
+        <div class="ep-body">
+          <div class="ep-title">{{ ep.title }}</div>
+          {% if ep.overview %}
+          <div class="ep-overview">{{ ep.overview }}</div>
+          {% endif %}
+        </div>
+        {% if ep.aired %}
+        <div class="ep-aired">{{ ep.aired }}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+
+{% elif query %}
+  <div class="no-episodes" style="margin: 60px auto; max-width: 400px; text-align:center;">
+    <p>No owned episodes matched <strong style="color:var(--text)">"{{ query }}"</strong></p>
+    <p class="no-episodes-hint">Try a different keyword — searches episode titles and plot summaries.</p>
+  </div>
+{% else %}
+  <div class="no-episodes" style="margin: 60px auto; max-width: 400px; text-align:center;">
+    <p style="color:var(--text-muted)">Enter a keyword above to search across all your series.</p>
+  </div>
+{% endif %}
+
+{% endblock %}
