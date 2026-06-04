@@ -4,7 +4,6 @@ Your media collection, cross-referenced with TVDB. Existarr shows only the episo
 
 This project was born from a home schooling need. We love watching documentaries to supplement our learning, but were never sure what we actually had. This project helps us to know what is in our inventory and search across all series and films. With this project we can search for keywords and display all options before choosing what to watch.
 
-(this is a 100% vibe coded project)
 ---
 
 ## Setup
@@ -80,3 +79,5 @@ The search bar on each series page filters in real-time against:
 
 Matching text is highlighted in the results.
 That said, it functions on text strings. So check for any irrelevant results.
+---
+(this is a 100% vibe coded project)
