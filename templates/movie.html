@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %} — {{ show_name }}{% endblock %}
+
+{% block content %}
+<div class="series-header">
+  {% if show_image %}
+  <div class="series-banner" style="background-image: url('{{ show_image }}')">
+    <div class="series-banner-overlay"></div>
+  </div>
+  {% endif %}
+  <div class="series-meta">
+    <div class="series-meta-left">
+      <div class="movie-type-badge">🎬 MOVIE</div>
+      <h1 class="series-title">{{ show_name }}</h1>
+      {% if show.get('auto') %}
+      <span class="auto-tag">AUTO-DISCOVERED</span>
+      {% endif %}
+
+      <div class="movie-meta-row">
+        {% if year %}<span class="movie-meta-item">{{ year }}</span>{% endif %}
+        {% if runtime %}<span class="movie-meta-item">{{ runtime }} min</span>{% endif %}
+        {% if genres %}
+          {% for g in genres %}
+          <span class="movie-meta-item movie-genre">{{ g }}</span>
+          {% endfor %}
+        {% endif %}
+      </div>
+
+      {% if overview %}
+      <p class="movie-overview">{{ overview }}</p>
+      {% endif %}
+
+      <!-- Media paths display -->
+      <div class="paths-section">
+        <div class="paths-header">
+          <span class="path-label">MEDIA PATHS</span>
+          <button class="path-edit-btn" onclick="togglePathEdit()">edit</button>
+        </div>
+
+        <div class="paths-display" id="paths-display">
+          {% if media_paths %}
+            {% for p in media_paths %}
+            <div class="path-chip">{{ p }}</div>
+            {% endfor %}
+          {% else %}
+            <span class="path-chip path-chip-warn">No paths configured</span>
+          {% endif %}
+        </div>
+
+        <div class="path-edit-form" id="path-edit-form" style="display:none;">
+          <form action="/update-paths/{{ tvdb_id }}" method="POST" id="paths-form">
+            <div id="edit-path-fields">
+              {% for p in media_paths %}
+              <div class="edit-path-row">
+                <input type="text" name="path_{{ loop.index0 }}" value="{{ p }}" class="path-input" />
+                <button type="button" class="path-remove-btn" onclick="removePathRow(this)">✕</button>
+              </div>
+              {% endfor %}
+              {% if not media_paths %}
+              <div class="edit-path-row">
+                <input type="text" name="path_0" value="" class="path-input" placeholder="/storage2/Movies/Movie Name" />
+                <button type="button" class="path-remove-btn" onclick="removePathRow(this)">✕</button>
+              </div>
+              {% endif %}
+            </div>
+            <div class="edit-path-actions">
+              <button type="button" class="add-path-inline-btn" onclick="addEditPath()">+ Add Path</button>
+              <button type="submit" class="path-save-btn">Save</button>
+              <button type="button" class="path-cancel-btn" onclick="togglePathEdit()">Cancel</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="series-meta-right">
+      <div class="series-stats">
+        {% if movie_files %}
+          <span class="stat-badge stat-badge-film">✓ In Collection</span>
+        {% else %}
+          <span class="stat-badge stat-badge-missing">✗ No File Found</span>
+        {% endif %}
+      </div>
+      <form action="/remove/{{ tvdb_id }}" method="POST" class="remove-form"
+            onsubmit="return confirm('Remove {{ show_name }} from Existarr?')">
+        <button type="submit" class="remove-btn">✕ Remove Movie</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- File list -->
+<div class="episode-list" id="episode-list">
+  {% if movie_files %}
+    {% for fname in movie_files %}
+    <div class="episode-card movie-file-card">
+      <div class="ep-code">🎬</div>
+      <div class="ep-body">
+        <div class="ep-title">{{ fname }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+  <div class="no-episodes">
+    <p>No video files found for this film.</p>
+    <p class="no-episodes-hint">
+      {% if media_paths %}
+        Scanning:<br>
+        {% for p in media_paths %}<code>{{ p }}</code><br>{% endfor %}
+        <br>Expected a video file (.mkv, .mp4, .avi, etc.) in the above path(s).
+      {% else %}
+        No media paths are configured for this film.
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function togglePathEdit() {
+    const display = document.getElementById('paths-display');
+    const form    = document.getElementById('path-edit-form');
+    const editing = form.style.display !== 'none';
+    display.style.display = editing ? 'block' : 'none';
+    form.style.display    = editing ? 'none'  : 'block';
+  }
+
+  let editPathCount = {{ media_paths | length if media_paths else 1 }};
+
+  function addEditPath() {
+    const container = document.getElementById('edit-path-fields');
+    const row = document.createElement('div');
+    row.className = 'edit-path-row';
+    row.innerHTML = `
+      <input type="text" name="path_${editPathCount++}" class="path-input"
+             placeholder="/storage2/Movies/Movie Name" />
+      <button type="button" class="path-remove-btn" onclick="removePathRow(this)">✕</button>
+    `;
+    container.appendChild(row);
+  }
+
+  function removePathRow(btn) {
+    const row = btn.closest('.edit-path-row');
+    const container = document.getElementById('edit-path-fields');
+    if (container.children.length > 1) {
+      row.remove();
+    } else {
+      row.querySelector('input').value = '';
+    }
+  }
+</script>
+{% endblock %}
