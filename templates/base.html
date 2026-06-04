@@ -40,16 +40,28 @@
       <!-- Manual add show -->
       <div class="add-show-form" id="add-show-form">
         <div class="add-show-toggle" onclick="toggleAddForm()">
-          <span>+ ADD SERIES MANUALLY</span>
+          <span>+ ADD MANUALLY</span>
         </div>
         <div class="add-show-fields" id="add-show-fields" style="display:none;">
           <form action="/add" method="POST" id="manual-add-form">
-            <input type="text" name="tvdb_id" placeholder="TVDB Series ID" class="add-input" required />
+            <!-- Series / Movie — radio buttons, no JS required -->
+            <div class="source-type-radios source-type-radios-compact">
+              <label class="radio-type-label">
+                <input type="radio" name="media_type" value="series" checked />
+                <span class="radio-type-btn">📺 Series</span>
+              </label>
+              <label class="radio-type-label">
+                <input type="radio" name="media_type" value="movie" />
+                <span class="radio-type-btn">🎬 Movie</span>
+              </label>
+            </div>
+            <input type="text" name="tvdb_id" placeholder="TVDB ID" class="add-input" required />
             <div id="path-fields">
-              <input type="text" name="path_0" placeholder="/storage2/Shows/Series Name" class="add-input path-field" />
+              <input type="text" name="path_0"
+                     placeholder="/storage2/Shows/Series Name" class="add-input path-field" />
             </div>
             <button type="button" class="add-path-btn" onclick="addPathField()">+ add another path</button>
-            <button type="submit" class="add-btn">ADD SERIES</button>
+            <button type="submit" class="add-btn">ADD</button>
           </form>
         </div>
       </div>
@@ -61,16 +73,24 @@
       </a>
 
       <div class="sidebar-section-label-row">
-        <span class="sidebar-section-label">YOUR SERIES</span>
-        <button class="sort-toggle" id="sort-toggle" onclick="toggleSort()" title="Toggle sort order">
-          <span id="sort-icon">A↓</span>
-        </button>
+        <span class="sidebar-section-label">YOUR LIBRARY</span>
+        <div class="sort-dropdown-wrap" id="sort-dropdown-wrap">
+          <button class="sort-toggle" id="sort-toggle" onclick="toggleSortMenu()" title="Sort series">
+            <span id="sort-icon">A↓</span>
+          </button>
+          <div class="sort-menu" id="sort-menu" style="display:none;">
+            <button class="sort-option" data-sort="alpha-asc">A → Z</button>
+            <button class="sort-option" data-sort="alpha-desc">Z → A</button>
+            <button class="sort-option" data-sort="date-desc">Date Added ↓</button>
+            <button class="sort-option" data-sort="date-asc">Date Added ↑</button>
+          </div>
+        </div>
       </div>
 
       <nav class="show-list">
         {% if shows %}
           {% for sid, show in shows.items() %}
-          <a href="/series/{{ sid }}" class="show-item {% if request.path == '/series/' + sid %}active{% endif %}">
+          <a href="/series/{{ sid }}" class="show-item {% if request.path == '/series/' + sid %}active{% endif %}" data-date="{{ show.get('date_added', '') }}">
             {% if show.image %}
             <img src="{{ show.image }}" alt="" class="show-thumb" />
             {% else %}
@@ -78,9 +98,16 @@
             {% endif %}
             <div class="show-item-text">
               <span class="show-item-name">{{ show.name }}</span>
-              {% if show.get('auto') %}
-              <span class="show-auto-badge">AUTO</span>
-              {% endif %}
+              <div class="show-item-badges">
+                {% if show.get('media_type') == 'movie' %}
+                <span class="show-type-badge show-type-movie">🎬</span>
+                {% else %}
+                <span class="show-type-badge show-type-series">📺</span>
+                {% endif %}
+                {% if show.get('auto') %}
+                <span class="show-auto-badge">AUTO</span>
+                {% endif %}
+              </div>
             </div>
           </a>
           {% endfor %}
@@ -101,54 +128,110 @@
       fields.style.display = fields.style.display === 'none' ? 'block' : 'none';
     }
 
+
     let pathCount = 1;
     function addPathField() {
-      const container = document.getElementById('path-fields');
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.name = 'path_' + pathCount++;
-      input.placeholder = '/storage4/Kids Shows/Show Name';
-      input.className = 'add-input path-field';
+      const container  = document.getElementById('path-fields');
+      const mediaType  = document.getElementById('manual-media-type').value;
+      const input      = document.createElement('input');
+      input.type       = 'text';
+      input.name       = 'path_' + pathCount++;
+      input.placeholder = mediaType === 'movie'
+        ? '/storage4/Movies/Movie Name'
+        : '/storage4/Kids Shows/Show Name';
+      input.className  = 'add-input path-field';
       container.appendChild(input);
     }
 
     // ── Sidebar sort ───────────────────────────────────────────────────────
     const SORT_KEY = 'existarr_sort';
 
-    function applySort(alpha) {
-      const nav  = document.querySelector('.show-list');
+    const SORT_LABELS = {
+      'alpha-asc':  'A↓',
+      'alpha-desc': 'A↑',
+      'date-desc':  '📅↓',
+      'date-asc':   '📅↑',
+    };
+
+    function applySort(mode) {
+      const nav   = document.querySelector('.show-list');
       const items = Array.from(nav.querySelectorAll('a.show-item'));
       if (!items.length) return;
 
-      if (alpha) {
+      if (mode === 'alpha-asc') {
+        items.sort((a, b) =>
+          a.querySelector('.show-item-name').textContent.trim().toLowerCase()
+           .localeCompare(b.querySelector('.show-item-name').textContent.trim().toLowerCase())
+        );
+      } else if (mode === 'alpha-desc') {
+        items.sort((a, b) =>
+          b.querySelector('.show-item-name').textContent.trim().toLowerCase()
+           .localeCompare(a.querySelector('.show-item-name').textContent.trim().toLowerCase())
+        );
+      } else if (mode === 'date-desc') {
         items.sort((a, b) => {
-          const nameA = a.querySelector('.show-item-name').textContent.trim().toLowerCase();
-          const nameB = b.querySelector('.show-item-name').textContent.trim().toLowerCase();
-          return nameA.localeCompare(nameB);
+          // Fallback: items without a date go to the end
+          const da = a.dataset.date || '';
+          const db = b.dataset.date || '';
+          if (!da && !db) return parseInt(a.dataset.index) - parseInt(b.dataset.index);
+          if (!da) return 1;
+          if (!db) return -1;
+          return db.localeCompare(da);
+        });
+      } else if (mode === 'date-asc') {
+        items.sort((a, b) => {
+          const da = a.dataset.date || '';
+          const db = b.dataset.date || '';
+          if (!da && !db) return parseInt(a.dataset.index) - parseInt(b.dataset.index);
+          if (!da) return 1;
+          if (!db) return -1;
+          return da.localeCompare(db);
         });
       } else {
-        // Restore original order using data-index set at render time
+        // default: original insertion order
         items.sort((a, b) => parseInt(a.dataset.index) - parseInt(b.dataset.index));
       }
 
       items.forEach(item => nav.appendChild(item));
-      document.getElementById('sort-icon').textContent = alpha ? 'A↑' : 'A↓';
+      document.getElementById('sort-icon').textContent = SORT_LABELS[mode] || 'A↓';
+
+      // Highlight active option
+      document.querySelectorAll('.sort-option').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.sort === mode);
+      });
     }
 
-    function toggleSort() {
-      const current = localStorage.getItem(SORT_KEY) === 'alpha';
-      const next = !current;
-      localStorage.setItem(SORT_KEY, next ? 'alpha' : 'default');
-      applySort(next);
+    function toggleSortMenu() {
+      const menu = document.getElementById('sort-menu');
+      menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
     }
+
+    // Close menu when clicking outside
+    document.addEventListener('click', (e) => {
+      const wrap = document.getElementById('sort-dropdown-wrap');
+      if (wrap && !wrap.contains(e.target)) {
+        document.getElementById('sort-menu').style.display = 'none';
+      }
+    });
 
     // Stamp each item with its original index, then apply saved preference
     document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('a.show-item').forEach((el, i) => {
         el.dataset.index = i;
       });
-      const isAlpha = localStorage.getItem(SORT_KEY) === 'alpha';
-      applySort(isAlpha);
+
+      // Wire up sort option buttons
+      document.querySelectorAll('.sort-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const mode = btn.dataset.sort;
+          localStorage.setItem(SORT_KEY, mode);
+          applySort(mode);
+          document.getElementById('sort-menu').style.display = 'none';
+        });
+      });
+
+      const saved = localStorage.getItem(SORT_KEY) || 'alpha-asc';
+      applySort(saved);
     });
   </script>
   {% block scripts %}{% endblock %}
