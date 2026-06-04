@@ -21,6 +21,8 @@ TVDB_ID_RE = re.compile(r"\{tvdb-(\d+)\}", re.IGNORECASE)
 SXEX_RE    = re.compile(r"[Ss](\d{1,2})[Ee](\d{1,2})")
 MEDIA_ROOT = os.environ.get("MEDIA_ROOT", "/media")
 
+VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".mpg", ".mpeg"}
+
 # ── TVDB helpers ──────────────────────────────────────────────────────────────
 
 def tvdb_token():
@@ -34,8 +36,31 @@ def tvdb_get(path, token):
         headers={"Authorization": f"Bearer {token}"},
         timeout=15,
     )
-    r.raise_for_status()
+    if not r.ok:
+        raise requests.HTTPError(
+            f"TVDB {r.status_code} for {path}: {r.text[:300]}", response=r
+        )
     return r.json().get("data", {})
+
+
+def _extract_image(data):
+    """
+    Robustly extract a poster/image URL from a TVDB base or extended record.
+    TVDB v4 movies: base record has top-level 'image'; extended record may have
+    it too, but the most reliable source is artworks[] filtered to type 14
+    (movie poster) or type 2 (series poster), falling back to 'image'.
+    """
+    # Prefer top-level image if present and non-empty
+    img = data.get("image", "")
+    if img:
+        return img
+    # Fall back to artworks array (extended records)
+    for artwork in data.get("artworks", []):
+        if artwork.get("type") in (14, 2, 1):   # movie poster, series poster, banner
+            url = artwork.get("image") or artwork.get("thumbnail", "")
+            if url:
+                return url
+    return ""
 
 # ── Episode helpers ───────────────────────────────────────────────────────────
 
@@ -73,6 +98,25 @@ def filter_to_owned(episodes_raw, owned):
     episodes.sort(key=lambda x: (x["season"], x["episode"]))
     return episodes
 
+# ── Movie helpers ─────────────────────────────────────────────────────────────
+
+def scan_movie_files(paths):
+    """
+    Scan paths for video files (non-SxEx named).
+    Returns list of filenames found.
+    """
+    found = []
+    for path in paths:
+        if not os.path.isdir(path):
+            log.warning("scan_movie_files: path not found: %s", path)
+            continue
+        for dirpath, _, filenames in os.walk(path):
+            for fname in filenames:
+                ext = os.path.splitext(fname)[1].lower()
+                if ext in VIDEO_EXTS:
+                    found.append(fname)
+    return found
+
 # ── Filesystem helpers ────────────────────────────────────────────────────────
 
 def scan_media(paths):
@@ -93,11 +137,6 @@ def scan_media(paths):
     return owned
 
 def resolve_path(raw):
-    """
-    Turn a user-supplied path string into an absolute path.
-    - Already absolute -> use as-is
-    - Relative         -> join onto MEDIA_ROOT
-    """
     raw = raw.strip()
     if not raw:
         return None
@@ -106,18 +145,12 @@ def resolve_path(raw):
     return os.path.join(MEDIA_ROOT, raw)
 
 def get_media_paths(show):
-    """
-    Return resolved absolute media paths for a show.
-    Handles both new media_paths list and legacy media_path string.
-    Relative paths are resolved against MEDIA_ROOT.
-    """
     if "media_paths" in show:
         raw_list = show["media_paths"]
     elif "media_path" in show:
         raw_list = [show["media_path"]]
     else:
         raw_list = []
-
     resolved = [resolve_path(p) for p in raw_list]
     return [p for p in resolved if p]
 
@@ -135,10 +168,19 @@ def save_shows(shows):
         json.dump(shows, f, indent=2)
 
 def load_sources():
-    """Load auto-discovery source paths."""
+    """
+    Load auto-discovery sources.
+    Sources are stored as a list of objects: {"path": str, "type": "series"|"movie"}
+    Migrates legacy flat string list on first load.
+    """
     if os.path.exists(SOURCES_FILE):
         with open(SOURCES_FILE) as f:
-            return json.load(f)
+            data = json.load(f)
+        # ── Migrate legacy flat string list ──────────────────────────────────
+        if data.get("paths") and isinstance(data["paths"][0], str):
+            data["paths"] = [{"path": p, "type": "series"} for p in data["paths"]]
+            save_sources(data)
+        return data
     return {"paths": [], "last_run": None, "last_added": []}
 
 def save_sources(sources):
@@ -148,14 +190,16 @@ def save_sources(sources):
 
 # ── Auto-discovery ────────────────────────────────────────────────────────────
 
-def discover_tvdb_folders(root_paths):
+def discover_tvdb_folders(sources):
     """
-    Recursively walk root_paths and return list of
-    {"tvdb_id": str, "path": str, "folder_name": str}
+    Recursively walk source paths and return list of
+    {"tvdb_id": str, "path": str, "folder_name": str, "media_type": "series"|"movie"}
     for every folder whose name contains {tvdb-XXXXXXX}.
     """
     found = []
-    for root in root_paths:
+    for source in sources:
+        root       = source["path"]
+        media_type = source.get("type", "series")
         if not os.path.isdir(root):
             log.warning("discover: source path not found: %s", root)
             continue
@@ -167,13 +211,37 @@ def discover_tvdb_folders(root_paths):
                         "tvdb_id":     m.group(1),
                         "path":        os.path.join(dirpath, d),
                         "folder_name": d,
+                        "media_type":  media_type,
                     })
     return found
 
+def fetch_tvdb_item(tvdb_id, media_type, token):
+    """
+    Fetch series or movie metadata from TVDB.
+    media_type must be "movie" or "series".
+    Returns normalised dict: {name, image, media_type}
+    Raises requests.HTTPError on TVDB failure (e.g. wrong type for the ID).
+    """
+    media_type = media_type.lower().strip()
+    if media_type == "movie":
+        data = tvdb_get(f"/movies/{tvdb_id}", token)
+        return {
+            "name":       data.get("name") or f"Movie {tvdb_id}",
+            "image":      _extract_image(data),
+            "media_type": "movie",
+        }
+    else:
+        data = tvdb_get(f"/series/{tvdb_id}", token)
+        return {
+            "name":       data.get("name") or f"Series {tvdb_id}",
+            "image":      _extract_image(data),
+            "media_type": "series",
+        }
+
 def run_autodiscovery():
     """
-    Scan all source paths, find {tvdb-ID} folders, add any new shows.
-    Returns list of newly-added show names.
+    Scan all source paths, find {tvdb-ID} folders, add any new shows/movies.
+    Returns list of newly-added titles.
     """
     sources = load_sources()
     if not sources.get("paths"):
@@ -181,9 +249,9 @@ def run_autodiscovery():
         return []
 
     log.info("autodiscovery: starting scan of %d source(s)…", len(sources["paths"]))
-    found   = discover_tvdb_folders(sources["paths"])
-    shows   = load_shows()
-    added   = []
+    found = discover_tvdb_folders(sources["paths"])
+    shows = load_shows()
+    added = []
 
     if not found:
         log.info("autodiscovery: no {tvdb-ID} folders found.")
@@ -197,10 +265,10 @@ def run_autodiscovery():
             return []
 
         for item in found:
-            tvdb_id = item["tvdb_id"]
+            tvdb_id    = item["tvdb_id"]
+            media_type = item["media_type"]
 
             if tvdb_id in shows:
-                # Already known — ensure this path is in its media_paths list
                 existing_paths = get_media_paths(shows[tvdb_id])
                 if item["path"] not in existing_paths:
                     existing_paths.append(item["path"])
@@ -208,26 +276,27 @@ def run_autodiscovery():
                     shows[tvdb_id].pop("media_path", None)
                 continue
 
-            # New show — fetch from TVDB and add
             try:
-                series = tvdb_get(f"/series/{tvdb_id}", token)
+                meta = fetch_tvdb_item(tvdb_id, media_type, token)
                 shows[tvdb_id] = {
                     "id":          tvdb_id,
-                    "name":        series.get("name", item["folder_name"]),
-                    "image":       series.get("image", ""),
+                    "name":        meta["name"],
+                    "image":       meta["image"],
+                    "media_type":  meta["media_type"],
                     "media_paths": [item["path"]],
                     "auto":        True,
+                    "date_added":  datetime.now().isoformat(),
                 }
-                added.append(series.get("name", item["folder_name"]))
-                log.info("autodiscovery: added '%s' (tvdb %s)", shows[tvdb_id]["name"], tvdb_id)
+                added.append(meta["name"])
+                log.info("autodiscovery: added '%s' (%s, tvdb %s)", meta["name"], media_type, tvdb_id)
             except Exception as e:
-                log.error("autodiscovery: failed to add tvdb %s: %s", tvdb_id, e)
+                log.error("autodiscovery: failed to add tvdb %s (%s): %s", tvdb_id, media_type, e)
 
     save_shows(shows)
     sources["last_run"]   = datetime.now().isoformat()
     sources["last_added"] = added
     save_sources(sources)
-    log.info("autodiscovery: done. %d new show(s) added.", len(added))
+    log.info("autodiscovery: done. %d new item(s) added.", len(added))
     return added
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
@@ -235,7 +304,6 @@ def run_autodiscovery():
 scheduler = BackgroundScheduler(daemon=True)
 scheduler.add_job(run_autodiscovery, "interval", hours=24, id="autodiscovery")
 scheduler.start()
-# Run once at startup (in a thread so Flask starts immediately)
 import threading
 threading.Thread(target=run_autodiscovery, daemon=True).start()
 
@@ -248,8 +316,8 @@ def index():
 
 @app.route("/add", methods=["POST"])
 def add_show():
-    tvdb_id = request.form.get("tvdb_id", "").strip()
-    # Collect all path fields (path_0, path_1, …)
+    tvdb_id    = request.form.get("tvdb_id", "").strip()
+    media_type = request.form.get("media_type", "series").strip()
     paths = [
         v.strip()
         for k, v in request.form.items()
@@ -262,18 +330,20 @@ def add_show():
     shows = load_shows()
     if tvdb_id not in shows:
         try:
-            token  = tvdb_token()
-            series = tvdb_get(f"/series/{tvdb_id}", token)
+            token = tvdb_token()
+            meta  = fetch_tvdb_item(tvdb_id, media_type, token)
             shows[tvdb_id] = {
                 "id":          tvdb_id,
-                "name":        series.get("name", f"Series {tvdb_id}"),
-                "image":       series.get("image", ""),
+                "name":        meta["name"],
+                "image":       meta["image"],
+                "media_type":  meta["media_type"],
                 "media_paths": paths,
                 "auto":        False,
+                "date_added":  datetime.now().isoformat(),
             }
             save_shows(shows)
         except Exception as e:
-            return f"Error adding show: {e}", 500
+            return f"Error adding item: {e}", 500
 
     return redirect(url_for("show_series", tvdb_id=tvdb_id))
 
@@ -296,7 +366,7 @@ def update_paths(tvdb_id):
             if k.startswith("path_") and v.strip()
         ]
         shows[tvdb_id]["media_paths"] = paths
-        shows[tvdb_id].pop("media_path", None)   # remove legacy key if present
+        shows[tvdb_id].pop("media_path", None)
         save_shows(shows)
     return redirect(url_for("show_series", tvdb_id=tvdb_id))
 
@@ -308,29 +378,54 @@ def show_series(tvdb_id):
     if not show:
         return redirect(url_for("index"))
 
-    try:
-        token        = tvdb_token()
-        series_data  = tvdb_get(f"/series/{tvdb_id}/extended", token)
-        show_name    = series_data.get("name", show["name"])
-        show_image   = series_data.get("image", show.get("image", ""))
-        episodes_raw = get_all_episodes(tvdb_id, token)
-    except Exception as e:
-        return f"Error fetching series data from TVDB: {e}", 500
-
+    media_type  = show.get("media_type", "series")
     media_paths = get_media_paths(show)
-    owned       = scan_media(media_paths)
-    episodes    = filter_to_owned(episodes_raw, owned)
 
-    return render_template(
-        "series.html",
-        show=show,
-        show_name=show_name,
-        show_image=show_image,
-        episodes=episodes,
-        shows=shows,
-        tvdb_id=tvdb_id,
-        media_paths=media_paths,
-    )
+    try:
+        token = tvdb_token()
+        if media_type == "movie":
+            item_data  = tvdb_get(f"/movies/{tvdb_id}/extended", token)
+            show_name  = item_data.get("name") or show["name"]
+            show_image = _extract_image(item_data) or show.get("image", "")
+            genres  = [g["name"] for g in item_data.get("genres", [])]
+            runtime = item_data.get("runtime") or ""
+            year    = item_data.get("year") or ""
+            # overview lives at top level on extended records
+            overview = item_data.get("overview") or item_data.get("description") or ""
+            movie_files = scan_movie_files(media_paths)
+            return render_template(
+                "movie.html",
+                show=show,
+                show_name=show_name,
+                show_image=show_image,
+                overview=overview,
+                genres=genres,
+                runtime=runtime,
+                year=year,
+                movie_files=movie_files,
+                shows=shows,
+                tvdb_id=tvdb_id,
+                media_paths=media_paths,
+            )
+        else:
+            series_data  = tvdb_get(f"/series/{tvdb_id}/extended", token)
+            show_name    = series_data.get("name", show["name"])
+            show_image   = series_data.get("image", show.get("image", ""))
+            episodes_raw = get_all_episodes(tvdb_id, token)
+            owned        = scan_media(media_paths)
+            episodes     = filter_to_owned(episodes_raw, owned)
+            return render_template(
+                "series.html",
+                show=show,
+                show_name=show_name,
+                show_image=show_image,
+                episodes=episodes,
+                shows=shows,
+                tvdb_id=tvdb_id,
+                media_paths=media_paths,
+            )
+    except Exception as e:
+        return f"Error fetching data from TVDB: {e}", 500
 
 
 @app.route("/search")
@@ -344,20 +439,33 @@ def global_search():
         try:
             token = tvdb_token()
             for tvdb_id, show in shows.items():
-                episodes_raw = get_all_episodes(tvdb_id, token)
-                owned        = scan_media(get_media_paths(show))
-                owned_eps    = filter_to_owned(episodes_raw, owned)
-                matched = [
-                    ep for ep in owned_eps
-                    if q in ep["title"].lower() or q in ep["overview"].lower()
-                ]
-                if matched:
-                    results.append({
-                        "tvdb_id":    tvdb_id,
-                        "show_name":  show["name"],
-                        "show_image": show.get("image", ""),
-                        "episodes":   matched,
-                    })
+                media_type = show.get("media_type", "series")
+                if media_type == "movie":
+                    # Match on name only for movies
+                    if q in show["name"].lower():
+                        results.append({
+                            "tvdb_id":    tvdb_id,
+                            "show_name":  show["name"],
+                            "show_image": show.get("image", ""),
+                            "media_type": "movie",
+                            "episodes":   [],
+                        })
+                else:
+                    episodes_raw = get_all_episodes(tvdb_id, token)
+                    owned        = scan_media(get_media_paths(show))
+                    owned_eps    = filter_to_owned(episodes_raw, owned)
+                    matched = [
+                        ep for ep in owned_eps
+                        if q in ep["title"].lower() or q in ep["overview"].lower()
+                    ]
+                    if matched:
+                        results.append({
+                            "tvdb_id":    tvdb_id,
+                            "show_name":  show["name"],
+                            "show_image": show.get("image", ""),
+                            "media_type": "series",
+                            "episodes":   matched,
+                        })
         except Exception as e:
             return f"Search error: {e}", 500
 
@@ -378,11 +486,16 @@ def sources_page():
 
 @app.route("/sources/add", methods=["POST"])
 def add_source():
-    path = request.form.get("path", "").strip()
+    path       = request.form.get("path", "").strip()
+    media_type = request.form.get("media_type", "series").strip()
+    if media_type not in ("series", "movie"):
+        media_type = "series"
     if path:
         sources = load_sources()
-        if path not in sources["paths"]:
-            sources["paths"].append(path)
+        # Avoid duplicate paths
+        existing_paths = [s["path"] for s in sources["paths"]]
+        if path not in existing_paths:
+            sources["paths"].append({"path": path, "type": media_type})
             save_sources(sources)
     return redirect(url_for("sources_page"))
 
@@ -390,7 +503,7 @@ def add_source():
 def remove_source():
     path = request.form.get("path", "").strip()
     sources = load_sources()
-    sources["paths"] = [p for p in sources["paths"] if p != path]
+    sources["paths"] = [s for s in sources["paths"] if s["path"] != path]
     save_sources(sources)
     return redirect(url_for("sources_page"))
 
@@ -398,7 +511,6 @@ def remove_source():
 def trigger_scan():
     added = run_autodiscovery()
     return jsonify({"added": added, "count": len(added)})
-
 
 
 @app.route("/debug/<tvdb_id>")
@@ -410,10 +522,11 @@ def debug_show(tvdb_id):
 
     media_paths = get_media_paths(show)
     report = {
-        "tvdb_id":      tvdb_id,
-        "name":         show.get("name"),
-        "raw_stored":   show.get("media_paths", show.get("media_path", "(none)")),
-        "MEDIA_ROOT":   MEDIA_ROOT,
+        "tvdb_id":        tvdb_id,
+        "name":           show.get("name"),
+        "media_type":     show.get("media_type", "series"),
+        "raw_stored":     show.get("media_paths", show.get("media_path", "(none)")),
+        "MEDIA_ROOT":     MEDIA_ROOT,
         "resolved_paths": [],
     }
     for path in media_paths:
@@ -425,10 +538,10 @@ def debug_show(tvdb_id):
                     if SXEX_RE.search(fname):
                         files_found.append(os.path.join(dirpath, fname))
         report["resolved_paths"].append({
-            "path":   path,
-            "exists": exists,
-            "matched_files": files_found[:20],  # cap at 20 for readability
-            "total_matched": len(files_found),
+            "path":           path,
+            "exists":         exists,
+            "matched_files":  files_found[:20],
+            "total_matched":  len(files_found),
         })
 
     import json as _json
