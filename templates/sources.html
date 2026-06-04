@@ -7,7 +7,7 @@
   <p class="sources-intro">
     Add library root paths below. Existarr will recursively scan them for folders
     containing <code class="inline-code">{tvdb-XXXXXXX}</code> in their name and
-    automatically add matching series. Re-scans every 24 hours.
+    automatically add matching series or movies. Re-scans every 24 hours.
   </p>
 </div>
 
@@ -35,11 +35,14 @@
 
   {% if sources.paths %}
   <div class="source-list">
-    {% for path in sources.paths %}
+    {% for source in sources.paths %}
     <div class="source-row">
-      <span class="source-path">{{ path }}</span>
+      <span class="source-type-badge source-type-{{ source.type }}">
+        {% if source.type == 'movie' %}🎬 MOVIES{% else %}📺 SERIES{% endif %}
+      </span>
+      <span class="source-path">{{ source.path }}</span>
       <form action="/sources/remove" method="POST" style="margin:0;">
-        <input type="hidden" name="path" value="{{ path }}" />
+        <input type="hidden" name="path" value="{{ source.path }}" />
         <button type="submit" class="source-remove-btn"
                 onclick="return confirm('Remove this source path?')">✕</button>
       </form>
@@ -50,10 +53,24 @@
   <p class="no-sources-hint">No source paths added yet. Add a path below to get started.</p>
   {% endif %}
 
+  <!-- Add source form — radio buttons so type is always submitted correctly -->
   <form action="/sources/add" method="POST" class="add-source-form">
-    <input type="text" name="path" class="add-input"
+
+    <div class="source-type-radios">
+      <label class="radio-type-label">
+        <input type="radio" name="media_type" value="series" checked />
+        <span class="radio-type-btn">📺 Series</span>
+      </label>
+      <label class="radio-type-label">
+        <input type="radio" name="media_type" value="movie" />
+        <span class="radio-type-btn">🎬 Movie</span>
+      </label>
+    </div>
+
+    <input type="text" name="path" class="add-input add-input-source"
            placeholder="/storage2/Documentaries/Series" required />
     <button type="submit" class="add-btn">+ ADD SOURCE</button>
+
   </form>
 </div>
 
@@ -61,15 +78,17 @@
 <div class="sources-section sources-help">
   <h2 class="sources-section-title">NAMING CONVENTION</h2>
   <p class="sources-help-text">
-    For auto-discovery to work, your show folders must include a TVDB ID tag:
+    All folders must include a TVDB ID tag in their name:
   </p>
   <div class="naming-examples">
-    <div class="naming-ex">Wild Kratts (2010) <span class="tvdb-tag">{tvdb-216851}</span></div>
-    <div class="naming-ex">PBS NOVA <span class="tvdb-tag">{tvdb-73693}</span></div>
-    <div class="naming-ex">Nature (1982) <span class="tvdb-tag">{tvdb-77623}</span></div>
+    <div class="naming-ex"><span class="naming-type-label naming-type-series">📺 Series</span> Wild Kratts (2010) <span class="tvdb-tag">{tvdb-216851}</span></div>
+    <div class="naming-ex"><span class="naming-type-label naming-type-series">📺 Series</span> PBS NOVA <span class="tvdb-tag">{tvdb-73693}</span></div>
+    <div class="naming-ex"><span class="naming-type-label naming-type-movie">🎬 Movie</span> The Story of Playstation <span class="tvdb-tag">{tvdb-357608}</span></div>
   </div>
   <p class="sources-help-text" style="margin-top:12px;">
     The folder can be at any depth inside your source path — Existarr scans recursively.
+    Each source is tagged as <strong>Series</strong> or <strong>Movie</strong> so IDs are
+    looked up against the correct TVDB type and never confused.
   </p>
 </div>
 {% endblock %}
@@ -89,10 +108,10 @@ async function triggerScan() {
     result.style.display = 'block';
     if (data.count > 0) {
       result.className = 'scan-result scan-result-success';
-      result.innerHTML = `✓ Added ${data.count} new series: ${data.added.map(n => `<strong>${n}</strong>`).join(', ')}. <a href="/">Refresh sidebar</a> to see them.`;
+      result.innerHTML = `✓ Added ${data.count} new item(s): ${data.added.map(n => `<strong>${n}</strong>`).join(', ')}. <a href="/">Refresh sidebar</a> to see them.`;
     } else {
       result.className = 'scan-result scan-result-neutral';
-      result.textContent = '✓ Scan complete — no new series found.';
+      result.textContent = '✓ Scan complete — no new items found.';
     }
   } catch(e) {
     result.style.display = 'block';
